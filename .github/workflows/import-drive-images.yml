@@ -1,6 +1,8 @@
 name: Import approved Drive images
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "17 * * * *"
 permissions:
   contents: write
 jobs:
@@ -31,6 +33,7 @@ jobs:
           drive = build("drive", "v3", credentials=creds)
           out = Path("images")
           out.mkdir(exist_ok=True)
+          expected = set()
           token = None
           while True:
               page = drive.files().list(q=f"'{folder}' in parents and trashed = false", fields="nextPageToken,files(id,name,mimeType)", pageSize=100, pageToken=token).execute()
@@ -38,6 +41,7 @@ jobs:
                   name = f["name"]
                   if f["mimeType"] not in ("image/png", "image/jpeg") or not re.fullmatch(r"[A-Za-z0-9._-]+", name):
                       continue
+                  expected.add(name)
                   buf = io.BytesIO()
                   downloader = MediaIoBaseDownload(buf, drive.files().get_media(fileId=f["id"]))
                   done = False
@@ -49,12 +53,16 @@ jobs:
               token = page.get("nextPageToken")
               if not token:
                   break
+          # Only delete local image files after a complete successful Drive listing and download.
+          for existing in out.iterdir():
+              if existing.is_file() and existing.suffix.lower() in (".png", ".jpg", ".jpeg") and existing.name not in expected:
+                  existing.unlink()
           PY
       - name: Commit changes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add images/
+          git add -A images/
           if ! git diff --cached --quiet; then
             git commit -m "Import approved Drive images"
             git push
